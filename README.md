@@ -34,11 +34,11 @@ chessboard_ar_visualizer/
 if...
 ```
 cv.fillConvexPoly(display, top_face, colors["top"])
-cv.fillConvexPoly(display, side_face_1, colors["east"])
-cv.fillConvexPoly(display, side_face_2, colors["west"])
-cv.fillConvexPoly(display, side_face_3, colors["north"])
-cv.fillConvexPoly(display, side_face_4, colors["south"])
-cv.fillConvexPoly(display, bottom_face, colors["south"])
+cv.fillConvexPoly(display, side_face_1, colors["side_1"])
+cv.fillConvexPoly(display, side_face_2, colors["side_2"])
+cv.fillConvexPoly(display, side_face_3, colors["side_3"])
+cv.fillConvexPoly(display, side_face_4, colors["side_4"])
+cv.fillConvexPoly(display, bottom_face, colors["bottom"])
 ```
 -> The top face is hidden by the faces drawn later, and the subsequent faces are also hidden sequentially.
 
