@@ -4,6 +4,9 @@ This project uses OpenCV to detect a chessboard pattern in video frames and rend
 
 The cube is drawn in perspective based on the camera's intrinsic and extrinsic parameters. Only **the top** and **two closest side faces** are rendered in white and gray to simulate 3D depth.
 
+## Democration Video
+[Youtube](https://youtu.be/OBXHJy_vRdY)
+
 ## Features
 
 - Camera calibration from video using chessboard pattern
