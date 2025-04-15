@@ -1,6 +1,7 @@
 import numpy as np
 import cv2 as cv
 
+# Play video_file, pause one frame with 'space', select image with 'enter', end selection with 'esc'
 def select_img_from_video(video_file, board_pattern, wait_msec=10, wnd_name='Camera Calibration'):
     video = cv.VideoCapture(video_file)
     assert video.isOpened()
@@ -45,6 +46,31 @@ def calib_camera_from_chessboard(images, board_pattern, board_cellsize):
     rms, K, dist_coeff, rvecs, tvecs = cv.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
     return rms, K, dist_coeff
 
+def get_square_form_point(click_point, points, board_pattern):
+    cols, rows = board_pattern
+    width, height = rows - 1, cols - 1
+    pts = np.array(points).reshape((rows, cols, 2))
+    box_lower, box_upper = None, None
+    for x in range(width):
+        for y in range(height):
+            square = np.array([
+                pts[x][y],
+                pts[x][y+1],
+                pts[x+1][y+1],
+                pts[x+1][y]
+            ], dtype=np.float32)
+
+            if cv.pointPolygonTest(square, click_point, False) >= 0:
+                box_lower = np.array([
+                    [y, x, 0],
+                    [y + 1, x, 0],
+                    [y + 1, x + 1, 0],
+                    [y, x + 1, 0]
+                ])
+                box_upper = box_lower - [0, 0, 1]
+
+    return box_lower, box_upper
+
 def mouse_event_handler(event, x, y, flags, param):
     if event == cv.EVENT_LBUTTONUP:
         param['xy_e'] = (x, y)
@@ -59,6 +85,8 @@ if __name__ == '__main__':
     assert len(img_select) > 0, 'There is no selected images!'
 
     rms, K, dist_coeff = calib_camera_from_chessboard(img_select, board_pattern, board_cellsize)
+    print(K)
+    print(dist_coeff)
 
     mouse_state = {'xy_e': (0, 0)}
     cv.namedWindow('Pose Estimation')
@@ -68,8 +96,8 @@ if __name__ == '__main__':
     assert video.isOpened()
 
     display = None
-    click_points = (0, 0)
-    obj_points = board_cellsize * np.array([[c, r, 0] for r in range(board_pattern[1]) for c in range(board_pattern[0])])
+    click_point = (0, 0)
+    obj_points = board_cellsize * np.array([[c, r, 0] for r in range(board_pattern[1]) for c in range(board_pattern[0])], dtype=np.float32)
     cols, rows = board_pattern
 
     box_lower, box_upper = None, None
@@ -79,56 +107,54 @@ if __name__ == '__main__':
         if not valid:
             break
 
-        success, img_points = cv.findChessboardCorners(display, board_pattern, board_criteria)
+        success, img_points = cv.findChessboardCorners(display, board_pattern)
+        
+        if success:
+            if mouse_state['xy_e'][0] > 0 and mouse_state['xy_e'][1] > 0:
+                click_point = (mouse_state['xy_e'][0], mouse_state['xy_e'][1])
+                box_lower, box_upper = get_square_form_point(click_point, img_points, board_pattern)
+                mouse_state['xy_e'] = (0, 0)
 
-        if mouse_state['xy_e'][0] > 0 and mouse_state['xy_e'][1] > 0:
-            click_points = (mouse_state['xy_e'][0], mouse_state['xy_e'][1])
-            pts = np.array(img_points).reshape((rows, cols, 2))
-            for x in range(rows - 1):
-                for y in range(cols - 1):
-                    # 한 네모칸을 구성하는 4개 점 좌표 (좌상단부터 시계 방향)
-                    square = np.array([
-                        pts[x][y],
-                        pts[x][y+1],
-                        pts[x+1][y+1],
-                        pts[x+1][y]
-                    ], dtype=np.float32)
+            if (box_lower is not None):
+                ret, rvec, tvec = cv.solvePnP(obj_points, img_points, K, dist_coeff)
 
-                    # 클릭한 점이 해당 네모 내부에 있는지 확인
-                    if cv.pointPolygonTest(square, click_points, False) >= 0:
-                        box_lower = np.array([
-                            [y, x, 0],
-                            [y + 1, x, 0],
-                            [y + 1, x + 1, 0],
-                            [y, x + 1, 0]
-                        ])
-                        box_upper = box_lower - [0, 0, 1]
-            mouse_state['xy_e'] = (0, 0)
+                lower, _ = cv.projectPoints(box_lower * board_cellsize, rvec, tvec, K, dist_coeff)
+                upper, _ = cv.projectPoints(box_upper * board_cellsize, rvec, tvec, K, dist_coeff)
+                lower = np.int32(lower.reshape(-1, 2))
+                upper = np.int32(upper.reshape(-1, 2))
 
-        if (box_lower is not None):
-            ret, rvec, tvec = cv.solvePnP(obj_points, img_points, K, dist_coeff)
+                # Convert 'box_lower' to camera coordinates
+                R, _ = cv.Rodrigues(rvec)
+                transformed = (R @ (box_lower * board_cellsize).T).T + tvec.reshape(1, 3)
+                
+                # Calculate distances from the camera, then sort in ascending order
+                distances = np.sum(transformed**2, axis = 1)
+                sorted_indices = np.argsort(distances)
 
-            lower, _ = cv.projectPoints(box_lower * board_cellsize, rvec, tvec, K, dist_coeff)
-            upper, _ = cv.projectPoints(box_upper * board_cellsize, rvec, tvec, K, dist_coeff)
-            lower = np.int32(lower.reshape(-1, 2))
-            upper = np.int32(upper.reshape(-1, 2))
+                # Get projected 2d points sorted by closest order
+                lower_pts_closest_ord = lower[sorted_indices[:3]]
+                upper_pts_closest_ord = upper[sorted_indices[:3]]
 
-            R, _ = cv.Rodrigues(rvec)
-            transformed = (R @ (box_lower * board_cellsize).T).T + tvec.reshape(1, 3)
-            
-            distances = np.sum(transformed**2, axis = 1)
+                # Get two close faces
+                second_face = np.array([upper_pts_closest_ord[1], upper_pts_closest_ord[0], lower_pts_closest_ord[0], lower_pts_closest_ord[1]])
+                third_face = np.array([upper_pts_closest_ord[0], upper_pts_closest_ord[2], lower_pts_closest_ord[2], lower_pts_closest_ord[0]])
 
-            sorted_indices = np.argsort(distances)
+                # Mapping line segments and colors using 'set' concepts
+                color_map = {
+                    frozenset({0, 1}): (128, 128, 128),
+                    frozenset({1, 2}): (200, 200, 200),
+                    frozenset({2, 3}): (128, 128, 128),
+                    frozenset({3, 0}): (50, 50, 50)
+                }
 
-            lower_pts = lower[sorted_indices[:3]]
-            upper_pts = upper[sorted_indices[:3]]
+                # Get color based on absolute direction using color_map
+                second_color = color_map[frozenset({sorted_indices[0], sorted_indices[1]})]
+                third_color = color_map[frozenset({sorted_indices[0], sorted_indices[2]})]
 
-            second_face = np.array([upper_pts[1], upper_pts[0], lower_pts[0], lower_pts[1]])
-            third_face = np.array([upper_pts[0], upper_pts[2], lower_pts[2], lower_pts[0]])
-
-            cv.fillConvexPoly(display, third_face, (128, 128, 128))
-            cv.fillConvexPoly(display, second_face, (128, 128, 128))
-            cv.fillConvexPoly(display, upper, (255, 255, 255))
+                # Draw cube
+                cv.fillConvexPoly(display, third_face, third_color)
+                cv.fillConvexPoly(display, second_face, second_color)
+                cv.fillConvexPoly(display, upper, (255, 255, 255))
 
 
         cv.imshow('Pose Estimation', display)
